@@ -48,37 +48,38 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
-  // 1. PIPELINE ACTION: Send Raw PDF to FastAPI File Router
+  // pipeline send raw PDF to FastAPI filerouter
   const handlePDFUpload = async (rawFile) => {
     setIsUploading(true);
-    setAnswer(''); // Clear out any previous answers
+    setAnswer(''); // Clear answers
 
-    // Create a binary multi-part form wrapper
     const dataForm = new FormData();
-    dataForm.append('file', rawFile); // "file" matches your FastAPI argument parameter!
+    dataForm.append('file', rawFile); // "file" matches FastAPI arg
 
     try {
       const response = await fetch('http://localhost:8000/api/upload', {
         method: 'POST',
-        body: dataForm // The browser automatically handles multi-part boundary headers here
+        body: dataForm 
       });
 
-      if (!response.ok) throw new Error('Network error during file parsing.');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Network error during file parsing.' }));
+        throw new Error(errorData.detail || 'Network error during file parsing.');
+      }
 
       const data = await response.json();
       
-      // Update our master states with real database tracking IDs from FastAPI
       setCollectionName(data.collection_name);
       setFileTitle(data.display_title);
     } catch (err) {
       console.error(err);
-      alert('Failed to process and index your PDF file.');
+      alert('Failed to process and index your PDF file: ' + err.message);
     } finally {
       setIsUploading(false);
     }
   };
 
-  // 2. PIPELINE ACTION: Send String Query to Vector Processing Pipeline
+  // pipeline send query to the correct vector db
   const handleQuestionSubmit = async (userQuestion) => {
     setIsSearching(true);
     setAnswer('');
@@ -109,7 +110,7 @@ function App() {
     <div>
       <Header fileTitle={fileTitle} />
 
-      <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} />
+      <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
 
       <QueryBar 
         onSubmitQuestion={handleQuestionSubmit} 

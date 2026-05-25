@@ -10,16 +10,12 @@ DATA_PATH = r"/home/varooney/Projects/basicrag/backend/data"
 CHROMA_PATH = r"/home/varooney/Projects/basicrag//backend/chroma_db"
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
-collection = chroma_client.get_or_create_collection(name="growing_trees")
-
-# print(f"DEBUG: There are {collection.count()} documents in your database.")
-# the above is to ensure that chroma is actually reading and storing the data chunks  
 
 
 
 if __name__=="__main__":
 
-    user_query = input("What do you want to know about growing trees in urban areas?\n\n")
+    user_query = input("What do you want to know about your file?\n\n")
 
 
 
@@ -32,18 +28,18 @@ client = OpenAI(
 
 
 
-def rag_response(user_query)->str:
+def rag_response(user_query, collection_name)->str:
 
+    collection = chroma_client.get_or_create_collection(name=collection_name)
 
     results = collection.query(
     query_texts=[user_query],
-    n_results=1
+    n_results=10
     )
 
     system_prompt = """
-    You are a helpful assistant. You answer questions about choosing the right trees to plant in urban areas
-    based on the environmental conditions. 
-    But you only answer based on knowledge I'm providing you. You don't use your internal 
+    You are a helpful assistant. You answer questions about the PDF file data provided. 
+    You only answer based on knowledge I'm providing you. You don't use your internal 
     knowledge and you don't make things up.
     If you don't know the answer, just say: I don't know
     --------------------
