@@ -34,8 +34,19 @@ def rag_response(user_query, collection_name)->str:
 
     results = collection.query(
     query_texts=[user_query],
-    n_results=10
+    n_results=20
     )
+
+    documents = results['documents']
+    if not documents or not documents[0]:
+        return "I couldn't find relevant information."
+
+    chunks = list(dict.fromkeys(documents[0]))  # preserves order, removes dupes
+
+
+    print(f"Retrieved {len(chunks)} chunks")
+    for i, doc in enumerate(chunks):
+        print(f"\n--- Chunk {i+1} ---\n{doc[:200]}")
 
     system_prompt = """
     You are a helpful assistant. You answer questions about the PDF file data provided. 
@@ -44,7 +55,7 @@ def rag_response(user_query, collection_name)->str:
     If you don't know the answer, just say: I don't know
     --------------------
     The data:
-    """ + str(results['documents']) + """
+    """ + str(chunks) + """
     """
 
     #changed openai api model to a free Groq api key

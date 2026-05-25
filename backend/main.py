@@ -78,23 +78,27 @@ async def upload_pdf(file: UploadFile = File(...)):
         loader = PyPDFLoader(target_path)
         raw_documents = loader.load()
         
+        full_text = "\n\n".join([doc.page_content for doc in raw_documents])
+        
+
+
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=300,
-            chunk_overlap=100,
+            chunk_size=1000,
+            chunk_overlap=300,
             length_function=len,
             is_separator_regex=False,
         )
-        chunks = text_splitter.split_documents(raw_documents)
+        chunks = text_splitter.split_text(full_text)
         
         documents = []
         metadatas = []
         ids = []
         
         for i, chunk in enumerate(chunks):
-            if chunk.page_content.strip(): 
-                documents.append(chunk.page_content)
+            if chunk.strip(): 
+                documents.append(chunk)
                 ids.append(f"ID{i}")
-                metadatas.append(chunk.metadata)
+                metadatas.append({"source": file.filename, "chunk_index": i})
         
         if documents:
             collection = chroma_client.get_or_create_collection(name=collection_name)
