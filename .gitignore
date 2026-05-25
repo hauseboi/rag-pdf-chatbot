@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Env
+.venv/
+venv/
+env/
+ENV/
+
+# Env Vars
+.env
+.env.*
+!.env.example
+
+# Vector DB
+chroma_db/
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
