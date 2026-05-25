@@ -1,8 +1,9 @@
 import React, {useState} from 'react';
 
-function FileDrop({onFileSelected, isUploading}){
+function FileDrop({onFileSelected, isUploading, fileTitle}){
 
     const [isHovering, setIsHovering] = useState(false);
+    const hasFile = fileTitle && fileTitle !== 'No Document Uploaded';
 
     //handle browser from opening the pdf once it is hovering over this component
     //#1
@@ -52,10 +53,33 @@ function FileDrop({onFileSelected, isUploading}){
       onDragOver={handleDragOver}
       onDragLeave={handleDragOver}
       onDrop={handleDrop}
-      style={{ border: isHovering ? '2px solid blue' : '2px dashed grey', padding: '20px' }}
+      style={{ 
+        border: isHovering ? '2px solid blue' : (hasFile ? '2px solid green' : '2px dashed grey'), 
+        backgroundColor: hasFile && !isHovering ? '#f0fdf4' : 'transparent',
+        padding: '20px',
+        textAlign: 'center',
+        borderRadius: '8px',
+        transition: 'all 0.3s ease'
+      }}
     >
-      <label style={{ cursor: 'pointer', display: 'block' }}>
-        {isUploading ? ("Processing ...") : ("Drag & Drop your PDF here, or click to browse local files")}
+      <label style={{ cursor: 'pointer', display: 'block', margin: 0 }}>
+        {isUploading ? (
+          <span style={{ color: '#0284c7' }}>Processing Document...</span>
+        ) : hasFile ? (
+          <div>
+            <div style={{ color: '#166534', fontWeight: 'bold', marginBottom: '8px' }}>
+              Document Ready
+            </div>
+            <div style={{ color: '#4b5563', fontSize: '0.9em' }}>
+              {fileTitle}
+            </div>
+            <div style={{ color: '#6b7280', fontSize: '0.8em', marginTop: '4px' }}>
+              (Click or drag another PDF here to replace)
+            </div>
+          </div>
+        ) : (
+          <span style={{ color: '#4b5563' }}>Drag & Drop your PDF here, or click to browse local files</span>
+        )}
         
         <input 
           type="file" 

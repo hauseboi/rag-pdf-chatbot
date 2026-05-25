@@ -28,16 +28,17 @@
 
 
 
-
-
 import os
 import shutil
+import re
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from ask import rag_response
+from ask import rag_response, chroma_client
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-app = FastAPI(title="Urban Tree Planting RAG JSON API")
+app = FastAPI(title="RAG JSON API")
 
 # Target folder where uploaded PDFs will physically land
 UPLOAD_DIR = "./data"
@@ -51,7 +52,8 @@ app.add_middleware(
     allow_methods=["*"]
 )
 
-# Schema defining what incoming JSON query requests must look like
+
+#creating a template for incoming JSON data
 class queryreq(BaseModel):
     question: str
     collection_name: str # React sends this along with the text query
@@ -65,26 +67,59 @@ async def upload_pdf(file: UploadFile = File(...)):
     target_path = os.path.join(UPLOAD_DIR, file.filename)
     
     try:
-        # Stream raw incoming chunks out of RAM and write them to the hard drive
+        # pdf data from RAM and store locally
         with open(target_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # Send a receipt validation dictionary back down to React
+        safe_filename = re.sub(r'[^a-zA-Z0-9]', '_', file.filename)
+        collection_name = f"collection_{safe_filename}"
+        
+        # Load and chunk pdf
+        loader = PyPDFLoader(target_path)
+        raw_documents = loader.load()
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=300,
+            chunk_overlap=100,
+            length_function=len,
+            is_separator_regex=False,
+        )
+        chunks = text_splitter.split_documents(raw_documents)
+        
+        documents = []
+        metadatas = []
+        ids = []
+        
+        for i, chunk in enumerate(chunks):
+            if chunk.page_content.strip(): 
+                documents.append(chunk.page_content)
+                ids.append(f"ID{i}")
+                metadatas.append(chunk.metadata)
+        
+        if documents:
+            collection = chroma_client.get_or_create_collection(name=collection_name)
+            collection.upsert(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            
+        # confirmation back down to React
         return {
-            "collection_name": f"collection_{file.filename.replace('.', '_')}",
+            "collection_name": collection_name,
             "display_title": file.filename
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) 
     finally:
         file.file.close()
 
-# ROUTE 2: Accepts JSON text blocks matching our queryreq class schema
+#query & pdf sent by client
 @app.post("/api/ask")
 async def ask_rag(payload: queryreq):
     try:
-        # Process the question string through your custom RAG script
-        answer = rag_response(payload.question)
+        # Process qn via rag_response
+        answer = rag_response(payload.question, payload.collection_name)
         return {"answer": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

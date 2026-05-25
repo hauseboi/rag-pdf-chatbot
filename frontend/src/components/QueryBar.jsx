@@ -1,19 +1,16 @@
 import React, { useState } from 'react';
 
 export default function QueryBar({ onSubmitQuestion, isReady, isLoading }) {
-  // Local state to keep track of what the user is typing line-by-line
+
   const [typedText, setTypedText] = useState('');
 
   const handleFormSubmit = (e) => {
-    e.preventDefault(); // Stop the page from doing a hard refresh reload
+    e.preventDefault(); 
     
-    if (!typedText.trim()) return; // Exit early if the field is empty strings
+    if (!typedText.trim()) return; 
     
-    // Pass the text string up to the master App.jsx container
+    // pass to App.jsx
     onSubmitQuestion(typedText);
-    
-    // Clear the input box out back to an empty string
-    setTypedText('');
   };
 
   return (
@@ -21,13 +18,16 @@ export default function QueryBar({ onSubmitQuestion, isReady, isLoading }) {
       <textarea
         value={typedText}
         onChange={(e) => setTypedText(e.target.value)}
-        placeholder={isReady ? "Ask a question about this file..." : "⚠️ Upload a PDF to unlock question terminal"}
+        placeholder={isReady ? "Ask a question about this file..." : " Upload a PDF to begin"}
         disabled={!isReady || isLoading}
         required
       />
       <button type="submit" disabled={!isReady || isLoading}>
         {isLoading ? 'Searching Document...' : 'Submit Query'}
       </button>
+
+      <button type="button" onClick={() => setTypedText('')} disabled={!isReady || !typedText}>Clear</button>
     </form>
   );
+
 }
