@@ -36,6 +36,7 @@
 
 
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import Header from './components/Header';
 import FileDrop from './components/FileDrop';
 import QueryBar from './components/QueryBar';
@@ -120,9 +121,9 @@ function App() {
 
       {/* Basic vanilla output layer to render the AI reply */}
       {answer && (
-        <div style={{ marginTop: '20px', padding: '10px', background: '#e2e8f0' }}>
+        <div style={{ marginTop: '20px', padding: '10px', background: '#e2e8f0', borderRadius: '8px' }}>
           <strong>RESPONSE:</strong>
-          <p>{answer}</p>
+          <ReactMarkdown>{answer}</ReactMarkdown>
         </div>
       )}
     </div>

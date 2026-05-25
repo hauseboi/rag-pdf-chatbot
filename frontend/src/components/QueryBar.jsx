@@ -18,6 +18,12 @@ export default function QueryBar({ onSubmitQuestion, isReady, isLoading }) {
       <textarea
         value={typedText}
         onChange={(e) => setTypedText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleFormSubmit(e);
+          }
+        }}
         placeholder={isReady ? "Ask a question about this file..." : " Upload a PDF to begin"}
         disabled={!isReady || isLoading}
         required
