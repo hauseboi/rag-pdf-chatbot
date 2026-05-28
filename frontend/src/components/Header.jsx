@@ -5,10 +5,12 @@ export default function Header({ fileTitle }) {
   const hasFile = fileTitle && fileTitle !== 'No Document Uploaded';
 
   return (
-    <div>
+    <div style ={{ textAlign: 'center'}}>
       
 
-      <h1>{fileTitle}</h1>  {/*this is wat we are getting from the main app.jsx*/}
+      <h1 className="text-5xl whitespace-nowrap overflow-hidden text-ellipsis">
+        {fileTitle}
+      </h1>  {/*this is wat we are getting from the main app.jsx*/}
 
 
     </div>
