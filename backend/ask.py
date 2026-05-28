@@ -66,7 +66,7 @@ def rag_response(user_query, collection_name)->str:
     knowledge and you don't make things up.
     If you don't know the answer, just say: I don't know.
 
-    When your answer references a figure or diagram, include its ref tag exactly as it 
+    When your answer references a figure or a diagram, include its ref tag exactly as it 
     appears in the data, for example: ref:filename.png — this renders the image for the user.
     --------------------
     The data:
