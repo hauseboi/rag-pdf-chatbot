@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import Header from './components/Header';
@@ -9,7 +8,6 @@ import Sidebar from './components/Sidebar';
 const BASE_URL = "http://127.0.0.1:8000";
 
 function AnswerWithFigures({ text }) {
-  // split answer on ref:filename.png occurrences
   const parts = [];
   const refRegex = /ref:([^\s\]]+\.png)/g;
   let lastIndex = 0;
@@ -27,23 +25,20 @@ function AnswerWithFigures({ text }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="space-y-4">
       {parts.map((part, i) =>
         part.type === "text" ? (
-          <div key={i} className="prose-cyber">
-            <ReactMarkdown components={{p: ({node, ...props}) => <p style = {{textAlign: "left"}} {...props} />,
-                              li: ({node, ...props}) => <li style = {{textAlign: "left"}} {...props} />
-                              }}>{part.content}
-            </ReactMarkdown>
+          <div key={i} className="prose prose-sm max-w-none dark:prose-invert">
+            <ReactMarkdown>{part.content}</ReactMarkdown>
           </div>
         ) : (
-          <div key={i} className="rounded-xl overflow-hidden border border-cyber-border shadow-card">
+          <div key={i} className="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm">
             <img
               src={`${BASE_URL}/figures/${part.filename}`}
               alt={part.filename}
-              className="w-full object-contain max-h-96"
+              className="w-full object-contain max-h-96 bg-gray-50"
             />
-            <p className="text-[11px] font-mono text-cyber-dim/40 px-3 py-2 bg-pearl/60 border-t border-cyber-border">
+            <p className="text-xs font-mono text-gray-400 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
               {part.filename.replace(/_/g, " ").replace(".png", "")}
             </p>
           </div>
@@ -56,21 +51,16 @@ function AnswerWithFigures({ text }) {
 function App() {
   const [fileTitle, setFileTitle] = useState('No Document Uploaded');
   const [collectionName, setCollectionName] = useState('');
-  
   const [historyKey, setHistoryKey] = useState(0);
-
   const [messages, setMessages] = useState([]);
   const [sessionId, setSessionId] = useState(null);
-  
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
-  // pipeline send raw PDF to FastAPI filerouter
   const handlePDFUpload = async (rawFile) => {
     setIsUploading(true);
-
     const dataForm = new FormData();
-    dataForm.append('file', rawFile); // "file" matches FastAPI arg
+    dataForm.append('file', rawFile);
 
     try {
       const response = await fetch('http://localhost:8000/api/upload', {
@@ -84,13 +74,11 @@ function App() {
       }
 
       const data = await response.json();
-      
       setSessionId(data.session_id);
       setCollectionName(data.collection_name);
       setFileTitle(data.display_title);
       setMessages([]);
       setHistoryKey(k => k + 1);
-
     } catch (err) {
       console.error(err);
       alert('Failed to process and index your PDF file: ' + err.message);
@@ -99,22 +87,15 @@ function App() {
     }
   };
 
-
   const handleSessionSelect = (session) => {
-  setSessionId(session.id);
-  setCollectionName(session.collection_name);
-  setFileTitle(session.pdf_name);
-  setMessages(session.messages.map(m => ({
-    question: m.question,
-    answer: m.answer
-  })));
+    setSessionId(session.id);
+    setCollectionName(session.collection_name);
+    setFileTitle(session.pdf_name);
+    setMessages(session.messages.map(m => ({ question: m.question, answer: m.answer })));
   };
 
-  // pipeline send query to the correct vector db
   const handleQuestionSubmit = async (userQuestion) => {
     setIsSearching(true);
-
-    
     try {
       const response = await fetch('http://localhost:8000/api/ask', {
         method: 'POST',
@@ -130,70 +111,72 @@ function App() {
       if (!response.ok) throw new Error('Vector database lookup query failed.');
 
       const data = await response.json();
-      
-      setMessages(prev => [
-        ...prev, {
-        question: userQuestion,
-        answer: data.answer
-    }]);
-
-
+      setMessages(prev => [...prev, { question: userQuestion, answer: data.answer }]);
     } catch (err) {
       console.error(err);
-      setMessages(prev => [
-        ...prev, {
-        question: userQuestion,
-        answer: 'Failed to retrieve response from the vector database.'
-      }]);
+      setMessages(prev => [...prev, { question: userQuestion, answer: 'Failed to retrieve response from the vector database.' }]);
     } finally {
       setIsSearching(false);
     }
   };
 
   return (
-    <div style ={{ display: "flex", padding:"20px", marginLeft:"20px"}}>
-    <div style ={{ alignSelf: 'flex-start', background: 'violet', color: '#1e293b', padding: '10px 15px', borderRadius: '15px', width: '25%' }}>
-        <Sidebar
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+      {/* Sidebar - fixed width */}
+      <Sidebar
         key={historyKey}
         onSessionSelect={handleSessionSelect}
         activeSessionId={sessionId}
       />
-    </div>
-    <div style ={{ alignSelf: 'flex-end', background: '#4b0756ff', color: '#1e293b', padding: '10px 15px', borderRadius: '15px', maxWidth: '100%' }}>
-      <Header fileTitle={fileTitle}/>
 
-      <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top bar with file drop zone */}
+        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
+          <Header fileTitle={fileTitle} />
+          <div className="mt-3">
+            <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
+          </div>
+        </div>
 
-      <QueryBar 
-        onSubmitQuestion={handleQuestionSubmit} 
-        isReady={!!collectionName} 
-        isLoading={isSearching} 
-      />
-
-
-
-      
-
-      {/*render AI reply */}
-      {messages.length > 0 && (
-        <div style={{ marginTop: '20px', padding: '20px', background: '#e2e8f0', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          {messages.map((msg, i) => (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <div style={{ alignSelf: 'flex-start', background: 'lightblue', color: '#1e293b', padding: '10px 15px', borderRadius: '15px', maxWidth: '75%' }}>
-                <p style={{ margin: 0 }}><strong>You:</strong> {msg.question}</p>
-              </div>
-
-              <div style={{ alignSelf: 'flex-end', background: 'lightgreen', color: '#1e293b', padding: '10px 15px', borderRadius: '15px', maxWidth: '75%' }}>
-                <div style={{ margin: 0 }}><strong>RAG Bot:</strong>
-                   <AnswerWithFigures text={msg.answer} />
+        {/* Chat messages - scrollable */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500">
+              <p className="text-center">Upload a PDF and start asking questions</p>
+            </div>
+          ) : (
+            messages.map((msg, i) => (
+              <div key={i} className="space-y-3">
+                {/* User message */}
+                <div className="flex justify-end">
+                  <div className="max-w-[75%] bg-blue-500 text-white rounded-2xl rounded-br-none px-4 py-2 shadow-sm">
+                    <p className="text-sm font-medium">You</p>
+                    <p className="text-sm">{msg.question}</p>
+                  </div>
+                </div>
+                {/* Bot message */}
+                <div className="flex justify-start">
+                  <div className="max-w-[85%] bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-2 shadow-sm">
+                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">RAG Bot</p>
+                    <AnswerWithFigures text={msg.answer} />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
-      )}
+
+        {/* Query bar - sticky bottom */}
+        <div className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-4">
+          <QueryBar
+            onSubmitQuestion={handleQuestionSubmit}
+            isReady={!!collectionName}
+            isLoading={isSearching}
+          />
+        </div>
+      </div>
     </div>
-   </div>
   );
 }
 

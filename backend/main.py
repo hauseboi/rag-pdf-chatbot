@@ -17,8 +17,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 #to render the image in rag response by saving local copy
 from fastapi.staticfiles import StaticFiles
 
-from google import genai
-from google.genai import types
+# from google import genai
+# from google.genai import types
 
 # gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -123,6 +123,27 @@ def describe_crop(png_bytes):
 #     return response.text
 
 
+def find_vector_figure_regions(fitz_page):
+    """Find figures by locating caption text like 'Figure X:' and rendering above them."""
+    blocks = fitz_page.get_text("blocks")
+    page_height = fitz_page.rect.height
+    page_width = fitz_page.rect.width
+    regions = []
+
+    for block in blocks:
+        x0, y0, x1, y1, text, _, btype = block
+        if btype != 0:
+            continue
+        t = text.strip().lower()
+        if t.startswith("figure") or t.startswith("fig."):
+            # render the region above this caption — that's where the figure sits
+            margin = 10
+            clip = fitz.Rect(0, max(0, y0 - 400), page_width, y0 - margin)
+            if clip.height > 50:  # skip if region is too small
+                regions.append((clip, text.strip()))
+
+    return regions
+
 def process_pdf_text(file_path):
     doc = fitz.open(file_path)
     page_texts = [page.get_text("text").strip() for page in doc]
@@ -175,6 +196,36 @@ def process_pdf_vision(file_path, collection_name):
                 print(f"Could not extract image on page {page_num + 1}: {e}")
                 continue
 
+        
+
+
+        # also handle vector figures
+        figure_regions = find_vector_figure_regions(page)
+        for clip_rect, caption in figure_regions:
+            try:
+                # render just that region of the page at 2x resolution
+                mat = fitz.Matrix(2, 2)
+                pix = page.get_pixmap(matrix=mat, clip=clip_rect)
+                png_bytes = pix.tobytes("png")
+
+                if len(png_bytes) > 3.5 * 1024 * 1024:
+                    print(f"Vector figure too large on page {page_num+1}, skipping")
+                    continue
+
+                fig_idx = len(injections)
+                img_filename = f"{os.path.basename(file_path).replace('.pdf','')}_p{page_num}_fig{fig_idx}.png"
+                with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
+                    f.write(png_bytes)
+
+                print(f"Page {page_num+1} — vector figure: '{caption}'")
+                description = describe_crop(png_bytes)
+                block = f"\n[Figure: {caption} | ref:{img_filename}]\n{description}\n"
+                injections.append((clip_rect.y1, block))
+
+            except Exception as e:
+                print(f"Could not render vector figure on page {page_num+1}: {e}")
+                continue
+
         if injections:
             injections.sort(key=lambda x: x[0])  # top-to-bottom reading order
             for i, (_, block) in enumerate(injections):
@@ -185,6 +236,7 @@ def process_pdf_vision(file_path, collection_name):
                     ids=[chunk_id]
                 )
                 print(f"Vision chunk upserted — {chunk_id}")
+
 
     doc.close()
     print(f"Vision processing complete — {os.path.basename(file_path)}")

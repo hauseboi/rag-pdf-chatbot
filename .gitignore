@@ -25,6 +25,7 @@ data/
 *.swp
 .DS_Store
 
+/node_modules
 
 notes_mistakes.txt
 ui_improvements.txt
