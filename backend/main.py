@@ -40,18 +40,34 @@ groq_vision_client =OpenAI(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-VISION_PROMPT = """You are analyzing a figure from a technical or engineering document.
-Describe it exhaustively and precisely:
-- Figure type (schematic, flowchart, graph, chart, map, table, blueprint, diagram etc.)
-- Every visible label, axis title, axis value, legend entry, annotation, and unit
-- All data points, measurements, or quantitative values shown
-- Relationships, flows, or connections between components
-- Spatial layout and hierarchy of elements
-- Any patterns, trends, anomalies, or highlights
-- Materials, processes, or systems depicted if identifiable
+VISION_PROMPT = """You are analyzing a figure extracted from an architectural or technical document.
 
-Be thorough — this description is the only way a user can query this figure.
-Do not summarize. Describe everything you see."""
+First state the figure type (floor plan, elevation rendering, schematic, diagram, etc.).
+
+If this is a FLOOR PLAN or ARCHITECTURAL LAYOUT, describe exhaustively:
+- Every labeled room and space, with its approximate position on the page (top-left, center-right, etc.)
+- Every door symbol: which two spaces it connects, and swing direction if shown
+- Every window symbol: which wall it sits in and its approximate position along that wall
+- All built-in fixtures visible per room: toilets, sinks, bathtubs, showers, kitchen counters,
+  islands, cabinets, pantry shelving, laundry appliances, stairs, columns
+- Room adjacency map: which rooms share a wall or have a direct doorway connection
+- Any dimensions or measurements labeled on the drawing
+- Circulation paths: how you would walk from the entry through the home
+- Any elements marked as optional, alternate, or upgrade (dashed lines, "OPT." labels, etc.)
+- Garage bays, porch, patio, mud room, utility areas
+
+If this is a RENDERED ELEVATION or EXTERIOR VIEW, describe:
+- Architectural style, roofline shape, number of visible stories
+- Exterior materials (stucco, siding, brick, etc.)
+- Window count, shape, and placement per facade
+- Garage doors: count and width
+- Entry features: porch columns, steps, door style
+
+For ALL figure types also note:
+- Every text label, annotation, legend entry, and title visible
+- Any north arrow, scale bar, or grid references
+
+Be exhaustive. This description is the only representation of this figure in the knowledge base."""
 
 CAPTION_MARGIN = 60  # points below image bottom to scan for caption
 
@@ -150,7 +166,6 @@ def process_pdf_text(file_path):
     doc.close()
     return "\n\n".join(page_texts)
 
-
 def process_pdf_vision(file_path, collection_name):
     """only for image pages, upserts into figures folder."""
     doc = fitz.open(file_path)
@@ -159,11 +174,11 @@ def process_pdf_vision(file_path, collection_name):
     for page_num in range(len(doc)):
         page = doc[page_num]
         images = page.get_images(full=True)
-        if not images:
-            continue
+        # FIX 1: removed early exit — was skipping pages with no raster images
 
-        injections = []  # (y_position, block_text) — preserves reading order
+        injections = []
 
+        # --- Raster image pass ---
         for img_info in images:
             xref = img_info[0]
             rects = page.get_image_rects(xref)
@@ -180,8 +195,8 @@ def process_pdf_vision(file_path, collection_name):
                     pix = fitz.Pixmap(fitz.csRGB, pix)
                 png_bytes = pix.tobytes("png")
 
-                fig_idx = len(injections)  # per-page figure numbering
-                img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num}_fig{fig_idx}.png"
+                fig_idx = len(injections)
+                img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fig{fig_idx}.png"
                 with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
                     f.write(png_bytes)
 
@@ -196,40 +211,37 @@ def process_pdf_vision(file_path, collection_name):
                 print(f"Could not extract image on page {page_num + 1}: {e}")
                 continue
 
-        
-
-
-        # also handle vector figures
+        # --- Vector figure pass (caption-based) ---
         figure_regions = find_vector_figure_regions(page)
         for clip_rect, caption in figure_regions:
             try:
-                # render just that region of the page at 2x resolution
                 mat = fitz.Matrix(2, 2)
                 pix = page.get_pixmap(matrix=mat, clip=clip_rect)
                 png_bytes = pix.tobytes("png")
 
                 if len(png_bytes) > 3.5 * 1024 * 1024:
-                    print(f"Vector figure too large on page {page_num+1}, skipping")
+                    print(f"Vector figure too large on page {page_num + 1}, skipping")
                     continue
 
                 fig_idx = len(injections)
-                img_filename = f"{os.path.basename(file_path).replace('.pdf','')}_p{page_num}_fig{fig_idx}.png"
+                img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fig{fig_idx}.png"
                 with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
                     f.write(png_bytes)
 
-                print(f"Page {page_num+1} — vector figure: '{caption}'")
+                print(f"Page {page_num + 1} — vector figure: '{caption}'")
                 description = describe_crop(png_bytes)
                 block = f"\n[Figure: {caption} | ref:{img_filename}]\n{description}\n"
                 injections.append((clip_rect.y1, block))
 
             except Exception as e:
-                print(f"Could not render vector figure on page {page_num+1}: {e}")
+                print(f"Could not render vector figure on page {page_num + 1}: {e}")
                 continue
 
+        # --- Upsert all found injections ---
         if injections:
-            injections.sort(key=lambda x: x[0])  # top-to-bottom reading order
+            injections.sort(key=lambda x: x[0])
             for i, (_, block) in enumerate(injections):
-                chunk_id = f"vision_p{page_num}_f{i}"
+                chunk_id = f"vision_p{page_num+1}_f{i}"
                 collection.upsert(
                     documents=[block],
                     metadatas=[{"source": os.path.basename(file_path), "type": "figure", "page": page_num}],
@@ -237,6 +249,42 @@ def process_pdf_vision(file_path, collection_name):
                 )
                 print(f"Vision chunk upserted — {chunk_id}")
 
+        # FIX 2: full-page fallback — fires when vector drawings exist but caption
+        # matching found nothing. Catches pages like floor plans / option diagrams
+        # that have no "Figure X:" style captions regardless of whether a raster
+        # image was also present on the same page (the old `if not injections`
+        # condition broke on page 3 because the garage photo populated injections).
+        drawings = page.get_drawings()
+        if not figure_regions and len(drawings) > 20:
+            try:
+                mat = fitz.Matrix(2, 2)
+                pix = page.get_pixmap(matrix=mat)
+                png_bytes = pix.tobytes("png")
+
+                if len(png_bytes) > 3.5 * 1024 * 1024:
+                    mat = fitz.Matrix(1.5, 1.5)
+                    pix = page.get_pixmap(matrix=mat)
+                    png_bytes = pix.tobytes("png")
+
+                img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fullpage.png"
+                with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
+                    f.write(png_bytes)
+
+                print(f"Page {page_num + 1} — vector content without captions, rendering full page")
+                description = describe_crop(png_bytes)
+                block = (
+                    f"\n[Figure: Full page render, page {page_num + 1}"
+                    f" | ref:{img_filename}]\n{description}\n"
+                )
+                collection.upsert(
+                    documents=[block],
+                    metadatas=[{"source": os.path.basename(file_path), "type": "figure", "page": page_num}],
+                    ids=[f"vision_p{page_num+1}_fullpage"]
+                )
+                print(f"Vision chunk upserted — vision_p{page_num+1}_fullpage")
+
+            except Exception as e:
+                print(f"Full-page fallback failed on page {page_num + 1}: {e}")
 
     doc.close()
     print(f"Vision processing complete — {os.path.basename(file_path)}")

@@ -61,18 +61,44 @@ def rag_response(user_query, collection_name)->str:
         print(f"\n--- Chunk {i+1} ---\n{doc[:200]}")
 
     system_prompt = """
-    You are a helpful assistant. You answer questions about the PDF file data provided. 
-    You only answer based on knowledge I'm providing you. You don't use your internal 
-    knowledge and you don't make things up.
-    If you don't know the answer, just say: I don't know.
+    You are a helpful assistant that answers questions strictly based on the document data provided.
+    Do not use your internal knowledge. Do not make things up.
+    If the answer cannot be found in the data, say: I don't know.
 
-    When your answer references a figure or a diagram, include its ref tag exactly as it 
-    appears in the data, for example: ref:filename.png — this renders the image for the user.
+    HOW THE DATA IS STRUCTURED
+    The data contains two types of chunks:
+
+    1. Text chunks — raw text extracted from document pages.
+
+    2. Figure chunks — structured like this:
+    [Figure: <caption> | ref:<filename.png>]
+    <detailed visual description of the figure>
+
+    When answering a question, prioritize figure chunks for anything spatial or visual.
+    Use the visual description inside the figure chunk to form your answer.
+    When your answer references a figure, output its image reference on its own line in exactly this format:
+    [IMAGE:ref:<filename.png>]
+
+    FLOOR PLAN QUESTIONS
+    When the question concerns a floor plan or building layout, your answer must address:
+    - Room inventory: every room or space present
+    - Room adjacencies: which rooms connect directly or share a wall
+    - Doors: location and which spaces each door connects
+    - Windows: placement per room and wall
+    - Fixtures & built-ins per room: bathroom fixtures, closets, cabinetry, appliances, etc.
+    - Circulation: how rooms are accessed from entry
+    - Optional/upgrade elements: anything marked as optional or alternate
+
+    ELEVATION / EXTERIOR QUESTIONS
+    Cover: architectural style, materials, roofline, window and door placement, garage.
+
+    ELECTRICAL / SCHEMATIC QUESTIONS
+    Cover: component labels and values, pin connections, netlist, power and ground rails.
+
     --------------------
-    The data:
+    DATA:
     """ + str(chunks) + """
     """
-
 
     #changed openai api model to a free Groq api key
     response = client.chat.completions.create(

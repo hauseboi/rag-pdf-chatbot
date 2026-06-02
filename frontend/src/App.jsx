@@ -9,7 +9,13 @@ const BASE_URL = "http://127.0.0.1:8000";
 
 function AnswerWithFigures({ text }) {
   const parts = [];
-  const refRegex = /ref:([^\s\]]+\.png)/g;
+  
+  // 2. State to track which image is currently maximized (null if none)
+  const [selectedImage, setSelectedImage] = useState(null);
+
+  // Robust Regex Pattern (from previous step)
+  const refRegex = /\[[^\]]*?ref:([^\]]+\.png)\]/g;
+
   let lastIndex = 0;
   let match;
 
@@ -17,32 +23,75 @@ function AnswerWithFigures({ text }) {
     if (match.index > lastIndex) {
       parts.push({ type: "text", content: text.slice(lastIndex, match.index) });
     }
-    parts.push({ type: "image", filename: match[1] });
+    const extractedFilename = match[1].trim();
+    parts.push({ type: "image", filename: extractedFilename });
     lastIndex = match.index + match[0].length;
   }
+  
   if (lastIndex < text.length) {
     parts.push({ type: "text", content: text.slice(lastIndex) });
   }
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
       {parts.map((part, i) =>
         part.type === "text" ? (
-          <div key={i} className="prose prose-sm max-w-none dark:prose-invert">
+          <div key={`text-${i}`} className="prose prose-sm max-w-none dark:prose-invert leading-relaxed">
             <ReactMarkdown>{part.content}</ReactMarkdown>
           </div>
         ) : (
-          <div key={i} className="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm">
-            <img
-              src={`${BASE_URL}/figures/${part.filename}`}
-              alt={part.filename}
-              className="w-full object-contain max-h-96 bg-gray-50"
-            />
-            <p className="text-xs font-mono text-gray-400 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
-              {part.filename.replace(/_/g, " ").replace(".png", "")}
-            </p>
+          <div key={`img-${i}`} className="group rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm my-2 bg-gray-50 dark:bg-gray-900">
+            {/* 3. Wrap image in a container to add the zoom cue on hover */}
+            <div className="relative overflow-hidden cursor-zoom-in" onClick={() => setSelectedImage(part.filename)}>
+              <img
+                src={`${BASE_URL}/figures/${encodeURIComponent(part.filename)}`}
+                alt={part.filename}
+                className="w-full object-contain max-h-96 transition-transform duration-300 ease-in-out group-hover:scale-[1.02]"
+                onError={(e) => {
+                  e.target.onerror = null; 
+                  e.target.src = "https://placehold.co/600x400?text=Image+Asset+Missing";
+                }}
+              />
+              {/* "Click to maximize" */}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-200 flex items-center justify-center">
+                <span className="text-xs bg-black/60 text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                  Click to Expand
+                </span>
+              </div>
+            </div>
+            
+            <div className="text-xs font-mono text-gray-500 px-3 py-2 border-t border-gray-200 dark:border-gray-700">
+               {part.filename.replace(".png", "")}
+            </div>
           </div>
         )
+      )}
+
+      {/* ============================================================ */}
+      {/* 4. THE MODAL (Lightbox) - Conditional Rendering */}
+      {/* ============================================================ */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-6 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setSelectedImage(null)} // Close when clicking background
+        >
+          {/* Close Button (Top Right) */}
+          <button 
+            className="absolute top-6 right-6 text-white/70 hover:text-white text-3xl font-bold transition p-2"
+            onClick={() => setSelectedImage(null)}
+          >
+            &times;
+          </button>
+
+          {/* Maximized Image (uses max-h for screen fitting) */}
+          <img
+            src={`${BASE_URL}/figures/${encodeURIComponent(selectedImage)}`}
+            alt={selectedImage}
+            className="max-w-full max-h-[90vh] object-contain rounded-md shadow-2xl cursor-default"
+            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the image itself
+          />
+        </div>
+         
       )}
     </div>
   );
