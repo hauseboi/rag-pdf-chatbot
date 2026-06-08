@@ -85,7 +85,7 @@ npm run dev
 ```
 The frontend will typically run on `http://localhost:5173`.
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 basicrag/
