@@ -27,8 +27,8 @@ app = FastAPI(title="RAG JSON API")
 UPLOAD_DIR = "./data"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-FIGURES_DIR = "./data/figures"
-os.makedirs(FIGURES_DIR, exist_ok=True)
+# FIGURES_DIR = "./data/figures"
+# os.makedirs(FIGURES_DIR, exist_ok=True)
 
 
 
@@ -197,14 +197,14 @@ def process_pdf_vision(file_path, collection_name):
 
                 fig_idx = len(injections)
                 img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fig{fig_idx}.png"
-                with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
-                    f.write(png_bytes)
+                # with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
+                #     f.write(png_bytes)
 
                 caption = get_caption(page, img_rect)
                 print(f"Page {page_num + 1} — describing figure: '{caption or 'untitled'}'")
 
                 description = describe_crop(png_bytes)
-                block = f"\n[Figure: {caption or f'Untitled figure, page {page_num + 1}'} | ref:{img_filename}]\n{description}\n"
+                block = f"\n[Figure on page {page_num + 1}: {caption or 'Untitled figure'}]\n{description}\n"
                 injections.append((img_rect.y1, block))
 
             except Exception as e:
@@ -225,12 +225,12 @@ def process_pdf_vision(file_path, collection_name):
 
                 fig_idx = len(injections)
                 img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fig{fig_idx}.png"
-                with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
-                    f.write(png_bytes)
+                # with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
+                #     f.write(png_bytes)
 
                 print(f"Page {page_num + 1} — vector figure: '{caption}'")
                 description = describe_crop(png_bytes)
-                block = f"\n[Figure: {caption} | ref:{img_filename}]\n{description}\n"
+                block = f"\n[Figure on page {page_num + 1}: {caption}]\n{description}\n"
                 injections.append((clip_rect.y1, block))
 
             except Exception as e:
@@ -254,8 +254,12 @@ def process_pdf_vision(file_path, collection_name):
         # that have no "Figure X:" style captions regardless of whether a raster
         # image was also present on the same page (the old `if not injections`
         # condition broke on page 3 because the garage photo populated injections).
+        #PROBLEM ANND FIXED: PAGES W TOO MANY SEPARATING/STYLING LINES TAKEN AS FULLPAGECAPTURE AND SLOWING TIMES....
+
+        page_text = page.get_text("text").strip()
+
         drawings = page.get_drawings()
-        if not figure_regions and len(drawings) > 20:
+        if not figure_regions and len(drawings) > 80 and len(page_text)<300:
             try:
                 mat = fitz.Matrix(2, 2)
                 pix = page.get_pixmap(matrix=mat)
@@ -267,15 +271,12 @@ def process_pdf_vision(file_path, collection_name):
                     png_bytes = pix.tobytes("png")
 
                 img_filename = f"{os.path.basename(file_path).replace('.pdf', '')}_p{page_num+1}_fullpage.png"
-                with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
-                    f.write(png_bytes)
+                # with open(os.path.join(FIGURES_DIR, img_filename), "wb") as f:
+                #     f.write(png_bytes)
 
                 print(f"Page {page_num + 1} — vector content without captions, rendering full page")
                 description = describe_crop(png_bytes)
-                block = (
-                    f"\n[Figure: Full page render, page {page_num + 1}"
-                    f" | ref:{img_filename}]\n{description}\n"
-                )
+                block = f"\n[Full page render, page {page_num + 1}]\n{description}\n"
                 collection.upsert(
                     documents=[block],
                     metadatas=[{"source": os.path.basename(file_path), "type": "figure", "page": page_num}],
@@ -298,7 +299,7 @@ app.add_middleware(
 )
 
 
-app.mount("/figures", StaticFiles(directory=FIGURES_DIR), name="figures")
+# app.mount("/figures", StaticFiles(directory=FIGURES_DIR), name="figures")
 
 class queryreq(BaseModel):
     question: str
@@ -327,9 +328,10 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
 
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
-            chunk_overlap=300,
+            chunk_overlap=400,
             length_function=len,
             is_separator_regex=False,
+            separators=["\n\n", "\n", " ", ""]
         )
         chunks = text_splitter.split_text(full_text)
 
@@ -398,7 +400,10 @@ async def ask_rag(payload: queryreq):
             write_history(history)
 
         return {"answer": answer}
+
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

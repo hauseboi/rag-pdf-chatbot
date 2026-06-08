@@ -160,10 +160,17 @@ function App() {
       if (!response.ok) throw new Error('Vector database lookup query failed.');
 
       const data = await response.json();
-      setMessages(prev => [...prev, { question: userQuestion, answer: data.answer }]);
+      setMessages(prev => [...prev, {
+        question: userQuestion,
+        answer: String(data.answer || 'No answer returned.')
+      }]);
+
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { question: userQuestion, answer: 'Failed to retrieve response from the vector database.' }]);
+      setMessages(prev => [...prev, {
+        question: userQuestion,
+        answer: String(err.message || 'Failed to retrieve response from the vector database.')
+      }]);
     } finally {
       setIsSearching(false);
     }
@@ -208,7 +215,7 @@ function App() {
                 <div className="flex justify-start">
                   <div className="max-w-[85%] bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-2 shadow-sm">
                     <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">RAG Bot</p>
-                    <AnswerWithFigures text={msg.answer} />
+                    <ReactMarkdown>{msg.answer}</ReactMarkdown>  
                   </div>
                 </div>
               </div>
