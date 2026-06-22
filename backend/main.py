@@ -3,6 +3,7 @@ import shutil
 import re
 import json
 import uuid
+import tempfile
 import base64
 import fitz
 from datetime import datetime
@@ -14,13 +15,22 @@ from pydantic import BaseModel
 from ask import rag_response, chroma_client
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-#to render the image in rag response by saving local copy
-from fastapi.staticfiles import StaticFiles
+from typing import List 
+import requests
+import tldextract
 
+from firecrawl import Firecrawl
+
+firecrawl = Firecrawl(api_key=os.getenv("FIRECRAWL_API_KEY"))
+
+
+#to render the image in rag response by saving local copy
+# from fastapi.staticfiles import StaticFiles
 # from google import genai
 # from google.genai import types
-
 # gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+
 
 app = FastAPI(title="RAG JSON API")
 
@@ -299,7 +309,144 @@ app.add_middleware(
 )
 
 
-# app.mount("/figures", StaticFiles(directory=FIGURES_DIR), name="figures")
+#app.mount("/figures", StaticFiles(directory=FIGURES_DIR), name="figures")
+
+#--------------------------------------------------------#
+# section for handling the client searching for usrmanual online
+#--------------------------------------------------------#
+def is_legit(url: str , user_query: str):
+    url= url.lower()
+    extract = tldextract.extract(url)
+    domain = extract.domain
+    tld = extract.suffix
+    host = extract.registered_domain
+
+    BANNED_TLDS = {
+        'xyz', 'cc', 'top', 'click', 'download', 'space', 'biz', 'info', 
+        'online', 'site', 'tech', 'live', 'zip', 'mov'
+    }
+    if tld in BANNED_TLDS:
+        return False
+
+    if any(hub in host for hub in TRUSTED_HUBS):
+        return True
+
+    irrelevant_keywords = {'manual', 'guide', 'user', 'pdf', 'owners', 'download', 'support'}
+
+    #strip user query into usable words to search for relevant urls.
+    query_words = [word.strip(".,!?()-_") 
+                    for word in user_query.lower().split() 
+                    if len(word) > 2 and word not in irrelevant_keywords
+                    and domain not in word.lower()]
+ 
+    if domain in query_words and '-' not in domain:
+        return True
+    
+    for brand in query_words:
+        if brand in domain:
+            # If the domain contains the brand BUT also contains words like "manual", it's a sketchy third-party site
+            if any(ext in domain for ext in irrelevant_keywords):
+                print(f"Blocked brand-jacking attempt: {url}")
+                return False
+
+    return False
+
+
+# Fallback dummy results (used when no API key or search fails)
+def dummy_results(query: str) -> List[dict]:
+    return [
+        {
+            "title": "Dell XPS 13 9360 Setup Guide",
+            "url": "https://dl.dell.com/topicspdf/xps-13-9360-laptop_setup-guide_en-us.pdf",
+            "domain": "dl.dell.com"
+        },
+        {
+            "title": "Dell XPS 13 9360 Service Manual",
+            "url": "https://dl.dell.com/topicspdf/xps-13-9360-laptop_service-manual_en-us.pdf",
+            "domain": "support.dell.com"
+        },
+    ]
+
+# Extract items from Firecrawl response
+def search_firecrawl(query: str) -> List[dict]:
+    if not firecrawl:
+        return dummy_results(query)
+
+    try:
+        raw = firecrawl.search(
+            query=f"{query} filetype:pdf manual OR guide",
+            limit=10
+        )
+
+        # Debug: print raw.web structure
+        print(f"raw.web type: {type(raw.web)}")
+        print(f"raw.web dir: {dir(raw.web)}")
+        print(f"raw.web: {raw.web}")
+
+        # Access web results correctly
+        items = []
+        if hasattr(raw, 'web'):
+            web_data = raw.web
+            # Check if web_data has a 'results' attribute (likely a SearchWebData object)
+            if hasattr(web_data, 'results'):
+                items = web_data.results
+            elif isinstance(web_data, list):
+                items = web_data
+            else:
+                # If web_data is a dict, try to get 'results' key
+                if isinstance(web_data, dict):
+                    items = web_data.get('results', [])
+
+        # Fallback to 'data' if web is empty
+        if not items and hasattr(raw, 'data'):
+            data_attr = raw.data
+            if hasattr(data_attr, 'results'):
+                items = data_attr.results
+            elif isinstance(data_attr, list):
+                items = data_attr
+            elif isinstance(data_attr, dict):
+                items = data_attr.get('results', [])
+
+        if not items:
+            print("No items found in web or data – returning dummy")
+            return dummy_results(query)
+
+        filtered = []
+        for item in items:
+            # Extract url and title (works for dict or object)
+            if hasattr(item, 'get'):
+                link = item.get('url')
+                title = item.get('title', 'Unknown')
+            else:
+                link = getattr(item, 'url', None)
+                title = getattr(item, 'title', 'Unknown')
+
+            if not link:
+                continue
+
+            domain = tldextract.extract(link).registered_domain
+
+            # TEMPORARILY COMMENT OUT is_legit to see all results
+            # if is_legit(link, query):
+            filtered.append({
+                "title": title,
+                "url": link,
+                "domain": domain
+            })
+
+        print(f"Returning {len(filtered)} results")
+        return filtered
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return dummy_results(query)
+
+
+class SearchManual(BaseModel):
+    title: str
+    url: str
+    domain: str
+
 
 class queryreq(BaseModel):
     question: str
@@ -308,6 +455,7 @@ class queryreq(BaseModel):
     pdf_name: str | None = None
 
 
+#download the file to backend to then process and upload to chromadb. LATER MUST DELETE FILE....TBD
 @app.post("/api/upload")
 async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     if not file.filename.endswith('.pdf'):
@@ -373,6 +521,79 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
         file.file.close()
 
 
+#similar to upload endpoint but for pdf links
+@app.get("/api/download")
+async def download_and_ingest(url: str, background_tasks: BackgroundTasks):
+    # 1. Download the PDF
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
+    
+    # 2. Determine filename
+    filename = url.split("/")[-1]
+    if not filename.endswith(".pdf"):
+        filename = f"manual_{uuid.uuid4().hex[:8]}.pdf"
+
+    # 3. Save to UPLOAD_DIR (same as upload)
+    target_path = os.path.join(UPLOAD_DIR, filename)
+    with open(target_path, "wb") as f:
+        f.write(response.content)
+
+    # 4. --- REPEAT THE EXACT SAME PROCESSING AS /api/upload ---
+    try:
+        safe_filename = re.sub(r'[^a-zA-Z0-9]', '_', filename)
+        collection_name = f"collection_{safe_filename}"
+
+        # Extract text (synchronous — needed immediately)
+        full_text = process_pdf_text(target_path)
+        
+        # Vision processing: run in background (async), just like upload
+        background_tasks.add_task(process_pdf_vision, target_path, collection_name)
+
+        # Split text into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=400,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
+        )
+        chunks = text_splitter.split_text(full_text)
+
+        # Upsert into ChromaDB (synchronous — needed immediately)
+        documents = []
+        metadatas = []
+        ids = []
+        for i, chunk in enumerate(chunks):
+            if chunk.strip():
+                documents.append(chunk)
+                ids.append(f"ID{i}")
+                metadatas.append({"source": filename, "chunk_index": i})
+
+        if documents:
+            collection = chroma_client.get_or_create_collection(name=collection_name)
+            collection.upsert(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+
+        # Generate session ID
+        session_id = str(uuid.uuid4())
+
+        return {
+            "collection_name": collection_name,
+            "display_title": filename,
+            "session_id": session_id
+        }
+
+    except Exception as e:
+        # Clean up if something fails
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/ask")
 async def ask_rag(payload: queryreq):
     try:
@@ -410,3 +631,8 @@ async def ask_rag(payload: queryreq):
 @app.get("/api/history")
 def get_history():
     return read_history()
+
+
+@app.get("/api/search", response_model=List[SearchManual])
+async def search_manuals(q: str):
+    return search_firecrawl(q)

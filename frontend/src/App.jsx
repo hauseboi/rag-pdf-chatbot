@@ -4,6 +4,7 @@ import Header from './components/Header';
 import FileDrop from './components/FileDrop';
 import QueryBar from './components/QueryBar';
 import Sidebar from './components/Sidebar';
+import ManualSearch from './components/ManualSearch';
 
 const BASE_URL = "http://127.0.0.1:8000";
 
@@ -105,6 +106,35 @@ function App() {
   const [sessionId, setSessionId] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+
+  //for downloading pdf links off the net
+  const handleManualSelect = async(url, title)=> {
+    setIsUploading(true);
+    try {
+      const response = await fetch(`http://localhost:8000/api/download?url=${encodeURIComponent(url)}`);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Download failed');
+      }
+      const data = await response.json();
+      // This returns the same as /api/upload
+      setSessionId(data.session_id);
+      setCollectionName(data.collection_name);
+      setFileTitle(data.display_title);
+      setMessages([]);          // clear old messages
+      setHistoryKey(k => k + 1); // refresh sidebar
+      setSearchResults([]); // clear search results
+    }
+    catch (err) {
+      console.error(err);
+      alert('Failed to download and process the manual: ' + err.message);
+    } 
+    finally {
+      setIsUploading(false);
+    }
+  }
+
 
   const handlePDFUpload = async (rawFile) => {
     setIsUploading(true);
@@ -128,10 +158,12 @@ function App() {
       setFileTitle(data.display_title);
       setMessages([]);
       setHistoryKey(k => k + 1);
-    } catch (err) {
+    } 
+    catch (err) {
       console.error(err);
       alert('Failed to process and index your PDF file: ' + err.message);
-    } finally {
+    } 
+    finally {
       setIsUploading(false);
     }
   };
@@ -176,64 +208,74 @@ function App() {
     }
   };
 
+
   return (
-    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
-      {/* Sidebar - fixed width */}
-      <Sidebar
-        key={historyKey}
-        onSessionSelect={handleSessionSelect}
-        activeSessionId={sessionId}
-      />
+  <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+    {/* Sidebar - fixed width */}
+    <Sidebar
+      key={historyKey}
+      onSessionSelect={handleSessionSelect}
+      activeSessionId={sessionId}
+    />
 
-      {/* Main content area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar with file drop zone */}
-        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
-          <Header fileTitle={fileTitle} />
-          <div className="mt-3">
-            <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
-          </div>
+    {/* Main content area */}
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Top bar with file drop zone */}
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
+        <Header fileTitle={fileTitle} />
+        <div className="mt-3">
+          <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
         </div>
+        
+        
+        <ManualSearch onResults={setSearchResults} onSelect={handleManualSelect} isDownloading={isUploading}/>
+      </div>
 
-        {/* Chat messages - scrollable */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.length === 0 ? (
+
+      {/* Main viewport - scrollable */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {/* Chat messages layout streams seamlessly right below the search cards */}
+        {messages.length === 0 ? (
+          /* Show this prompt placeholder only if there are no search cards either */
+          searchResults.length === 0 && (
             <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500">
-              <p className="text-center">Upload a PDF and start asking questions</p>
+              <p className="text-center">Upload a local PDF or lookup a matching manual online to start</p>
             </div>
-          ) : (
-            messages.map((msg, i) => (
-              <div key={i} className="space-y-3">
-                {/* User message */}
-                <div className="flex justify-end">
-                  <div className="max-w-[75%] bg-blue-500 text-white rounded-2xl rounded-br-none px-4 py-2 shadow-sm">
-                    <p className="text-sm font-medium">You</p>
-                    <p className="text-sm">{msg.question}</p>
-                  </div>
-                </div>
-                {/* Bot message */}
-                <div className="flex justify-start">
-                  <div className="max-w-[85%] bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-2 shadow-sm">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">RAG Bot</p>
-                    <ReactMarkdown>{msg.answer}</ReactMarkdown>  
-                  </div>
+          )
+        ) : (
+          messages.map((msg, i) => (
+            <div key={i} className="space-y-3">
+              {/* User message */}
+              <div className="flex justify-end">
+                <div className="max-w-[75%] bg-blue-500 text-white rounded-2xl rounded-br-none px-4 py-2 shadow-sm">
+                  <p className="text-sm font-medium">You</p>
+                  <p className="text-sm">{msg.question}</p>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+              {/* Bot message */}
+              <div className="flex justify-start">
+                <div className="max-w-[85%] bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-none px-4 py-2 shadow-sm">
+                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">RAG Bot</p>
+                  <ReactMarkdown>{msg.answer}</ReactMarkdown>  
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
 
-        {/* Query bar - sticky bottom */}
-        <div className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-4">
-          <QueryBar
-            onSubmitQuestion={handleQuestionSubmit}
-            isReady={!!collectionName}
-            isLoading={isSearching}
-          />
-        </div>
+      {/* Query bar - sticky bottom */}
+      <div className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-4">
+        <QueryBar
+          onSubmitQuestion={handleQuestionSubmit}
+          isReady={!!collectionName}
+          isLoading={isSearching}
+        />
       </div>
     </div>
-  );
+  </div>
+);
 }
 
 export default App;
