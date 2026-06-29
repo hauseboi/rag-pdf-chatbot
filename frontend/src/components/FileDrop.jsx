@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import toast from 'react-hot-toast';
 
 function FileDrop({ onFileSelected, isUploading, fileTitle }) {
   const [isHovering, setIsHovering] = useState(false);
@@ -26,7 +27,7 @@ function FileDrop({ onFileSelected, isUploading, fileTitle }) {
       if (selectedFile.type === "application/pdf") {
         onFileSelected(selectedFile);
       } else {
-        alert("Invalid file format. Please drop a valid PDF.");
+        toast.error('Invalid file type: please provide PDFs only !');
       }
     }
   };

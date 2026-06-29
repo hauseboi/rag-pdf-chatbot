@@ -13,13 +13,9 @@ CHROMA_PATH = r"/home/varooney/Projects/basicrag/backend/chroma_db"
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 
 
-
-
-
 if __name__=="__main__":
 
     user_query = input("What do you want to know about your file?\n\n")
-
 
 
 #Point openai client at groq servers ---
@@ -27,7 +23,6 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=os.getenv("GROQ_API_KEY")
 )
-
 
 
 # --- Query classifier ---
@@ -80,19 +75,34 @@ def rag_response(user_query, collection_name)->str:
             query_texts=[user_query],
             n_results=min(TOTAL, 20)
         )
-        documents = results['documents']
-        if not documents or not documents[0]:
-            return "I couldn't find relevant information."
-        chunks = list(dict.fromkeys(documents[0]))
+        docs = results['documents'][0] #type: ignore
+        metas = results['metadatas'][0] #type: ignore
+
+        if not docs:
+            return "Relevant information could not be found"
+        
+        raw_chunks = []
+        for doc,meta in zip(docs,metas):
+            page = meta.get('page', '?')  #if page not found then returns ?
+            raw_chunks.append(f"[Page {page}] {doc}")
+
+        chunks = list(dict.fromkeys(raw_chunks))
         MAX_CHARS = 22000
 
     else:
         # Exhaustive / Summary — pull ALL chunks from the collection
         # No vector search needed; the LLM scans the full document
-        all_data = collection.get()
+        all_data = collection.get(include=["documents","metadatas"])
         if not all_data['documents']:
             return "I couldn't find relevant information."
-        chunks = all_data['documents']
+        
+        chunks = []
+        docs = results['documents'][0] #type: ignore
+        metas = results['metadatas'][0] #type: ignore
+
+        for doc,meta in zip(docs,metas):
+            page = meta.get('page', '?')  #if page not found then returns ?
+            chunks.append(f"[Page {page}] {doc}")
         MAX_CHARS = 35000
 
 
@@ -131,6 +141,7 @@ def rag_response(user_query, collection_name)->str:
     - Pay close attention to symbols: ™ and TM denote trademarks, ® denotes registered trademarks.
       and † denotes footnotes (NOT trademarks). Do NOT confuse these.
     - When listing items, cross-check every chunk to ensure nothing is missed.
+    - Ensure that each answer is supplied with citations in the format of [Page X] 
     """
 
     data_structure = """

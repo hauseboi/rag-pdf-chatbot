@@ -1,10 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState,useEffect } from 'react';
+import './index.css'
 import ReactMarkdown from 'react-markdown';
+import ReactDOM from 'react-dom/client';
 import Header from './components/Header';
 import FileDrop from './components/FileDrop';
 import QueryBar from './components/QueryBar';
 import Sidebar from './components/Sidebar';
 import ManualSearch from './components/ManualSearch';
+import toast from 'react-hot-toast';
+
+import Skeleton from 'react-loading-skeleton';
+import 'react-loading-skeleton/dist/skeleton.css';
 
 const BASE_URL = "http://127.0.0.1:8000";
 
@@ -99,6 +105,8 @@ function AnswerWithFigures({ text }) {
 }
 
 function App() {
+
+
   const [fileTitle, setFileTitle] = useState('No Document Uploaded');
   const [collectionName, setCollectionName] = useState('');
   const [historyKey, setHistoryKey] = useState(0);
@@ -109,64 +117,51 @@ function App() {
   const [searchResults, setSearchResults] = useState([]);
 
   //for downloading pdf links off the net
-  const handleManualSelect = async(url, title)=> {
-    setIsUploading(true);
-    try {
-      const response = await fetch(`http://localhost:8000/api/download?url=${encodeURIComponent(url)}`);
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Download failed');
-      }
-      const data = await response.json();
-      // This returns the same as /api/upload
-      setSessionId(data.session_id);
-      setCollectionName(data.collection_name);
-      setFileTitle(data.display_title);
-      setMessages([]);          // clear old messages
-      setHistoryKey(k => k + 1); // refresh sidebar
-      setSearchResults([]); // clear search results
+  const handleManualSelect = async (url, title) => {
+  setIsUploading(true);
+  const toastId = toast.loading('📥 Downloading manual...');
+
+  try {
+    const response = await fetch(`http://localhost:8000/api/download?url=${encodeURIComponent(url)}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Download failed');
     }
-    catch (err) {
-      console.error(err);
-      alert('Failed to download and process the manual: ' + err.message);
-    } 
-    finally {
-      setIsUploading(false);
-    }
+    const data = await response.json();
+    
+    setSessionId(data.session_id);
+    setCollectionName(data.collection_name);
+    setFileTitle(data.display_title);
+    setMessages([]);
+    setHistoryKey(k => k + 1);
+    setSearchResults([]);
+    
+    toast.success(`${data.display_title} ready!`, { id: toastId });
+  } catch (err) {
+    console.error(err);
+    toast.error('❌ ' + err.message, { id: toastId });
+  } finally {
+    setIsUploading(false);
   }
+};
 
 
-  const handlePDFUpload = async (rawFile) => {
-    setIsUploading(true);
-    const dataForm = new FormData();
-    dataForm.append('file', rawFile);
+const handlePDFUpload = async (rawFile) => {
+  setIsUploading(true);
+  const toastId = toast.loading('Uploading and indexing...');
 
-    try {
-      const response = await fetch('http://localhost:8000/api/upload', {
-        method: 'POST',
-        body: dataForm 
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Network error during file parsing.' }));
-        throw new Error(errorData.detail || 'Network error during file parsing.');
-      }
-
-      const data = await response.json();
-      setSessionId(data.session_id);
-      setCollectionName(data.collection_name);
-      setFileTitle(data.display_title);
-      setMessages([]);
-      setHistoryKey(k => k + 1);
-    } 
-    catch (err) {
-      console.error(err);
-      alert('Failed to process and index your PDF file: ' + err.message);
-    } 
-    finally {
-      setIsUploading(false);
-    }
-  };
+  try {
+    // ... existing code
+    const data = await response.json();
+    // ... set state
+    toast.success(`${data.display_title} indexed!`, { id: toastId });
+  } catch (err) {
+    console.error(err);
+    toast.error(err.message, { id: toastId });
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   const handleSessionSelect = (session) => {
     setSessionId(session.id);
@@ -175,38 +170,49 @@ function App() {
     setMessages(session.messages.map(m => ({ question: m.question, answer: m.answer })));
   };
 
-  const handleQuestionSubmit = async (userQuestion) => {
-    setIsSearching(true);
-    try {
-      const response = await fetch('http://localhost:8000/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: userQuestion,
-          session_id: sessionId,
-          collection_name: collectionName,
-          pdf_name: fileTitle
-        })
-      });
 
-      if (!response.ok) throw new Error('Vector database lookup query failed.');
 
-      const data = await response.json();
-      setMessages(prev => [...prev, {
+const handleQuestionSubmit = async (userQuestion) => {
+  setIsSearching(true);
+  const toastId = toast.loading('🔍 Searching manual...');
+
+  try {
+    const response = await fetch('http://localhost:8000/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         question: userQuestion,
-        answer: String(data.answer || 'No answer returned.')
-      }]);
+        session_id: sessionId,
+        collection_name: collectionName,
+        pdf_name: fileTitle
+      })
+    });
 
-    } catch (err) {
-      console.error(err);
-      setMessages(prev => [...prev, {
-        question: userQuestion,
-        answer: String(err.message || 'Failed to retrieve response from the vector database.')
-      }]);
-    } finally {
-      setIsSearching(false);
+    if (!response.ok) {
+      throw new Error('Vector database lookup query failed.');
     }
-  };
+
+    const data = await response.json();
+    toast.success('✅ Answer ready!', { id: toastId });
+
+    setMessages(prev => [...prev, {
+      question: userQuestion,
+      answer: String(data.answer || 'No answer returned.')
+    }]);
+
+  } catch (err) {
+    console.error(err);
+    toast.error('❌ ' + err.message, { id: toastId });
+    setMessages(prev => [...prev, {
+      question: userQuestion,
+      answer: String(err.message || 'Failed to retrieve response from the vector database.')
+    }]);
+  } finally {
+    setIsSearching(false);
+  }
+};
+
+
 
 
   return (
@@ -227,20 +233,50 @@ function App() {
           <FileDrop onFileSelected={handlePDFUpload} isUploading={isUploading} fileTitle={fileTitle} />
         </div>
         
-        
+          {/* Download Button - only show if a file is loaded */}
+          {fileTitle !== 'No Document Uploaded' && (
+            <a
+              href={`http://localhost:8000/api/pdf/${encodeURIComponent(fileTitle)}`}
+              download
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm flex-shrink-0"
+            >
+              {/* Simple Download Icon (SVG) */}
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download PDF
+            </a>
+          )}
+          
         <ManualSearch onResults={setSearchResults} onSelect={handleManualSelect} isDownloading={isUploading}/>
       </div>
+
+
 
 
       {/* Main viewport - scrollable */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
         {/* Chat messages layout streams seamlessly right below the search cards */}
-        {messages.length === 0 ? (
+
+
+
+        {isUploading ? (
+            // Show processing skeleton
+            <div className="flex flex-col items-center justify-center h-full space-y-4">
+              <Skeleton circle width={64} height={64} />
+              <Skeleton width={200} height={24} />
+              <Skeleton width={300} height={16} />
+              <div className="flex flex-col w-full max-w-md space-y-2">
+                <Skeleton height={80} />
+                <Skeleton height={80} />
+              </div>
+            </div>
+        ):messages.length === 0 ? (
           /* Show this prompt placeholder only if there are no search cards either */
           searchResults.length === 0 && (
             <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500">
-              <p className="text-center">Upload a local PDF or lookup a matching manual online to start</p>
+              <p className="text-center">Ready? Ask away!</p>
             </div>
           )
         ) : (

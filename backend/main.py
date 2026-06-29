@@ -50,6 +50,8 @@ groq_vision_client =OpenAI(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
+
+
 VISION_PROMPT = """You are analyzing a figure extracted from an architectural or technical document.
 
 First state the figure type (floor plan, elevation rendering, schematic, diagram, etc.).
@@ -170,11 +172,20 @@ def find_vector_figure_regions(fitz_page):
 
     return regions
 
+
 def process_pdf_text(file_path):
     doc = fitz.open(file_path)
-    page_texts = [page.get_text("text").strip() for page in doc]
+    page_texts = []
+    page_offsets = []  # cumulative character count before each page
+    total_chars = 0
+    for page in doc:
+        text = page.get_text("text")
+        page_texts.append(text)
+        page_offsets.append(total_chars)
+        total_chars += len(text)
     doc.close()
-    return "\n\n".join(page_texts)
+    return page_texts #, page_offsets, total_chars
+
 
 def process_pdf_vision(file_path, collection_name):
     """only for image pages, upserts into figures folder."""
@@ -441,6 +452,17 @@ def search_firecrawl(query: str) -> List[dict]:
         print(f"Error: {e}")
         return dummy_results(query)
 
+def get_page_texts(file_path):
+    #Returns a list of strings, one per page.
+    import fitz
+    doc = fitz.open(file_path)
+    page_texts = []
+    for page in doc:
+        text = page.get_text("text")
+        page_texts.append(text)
+    doc.close()
+    return page_texts   
+
 
 class SearchManual(BaseModel):
     title: str
@@ -470,29 +492,41 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
         safe_filename = re.sub(r'[^a-zA-Z0-9]', '_', file.filename)
         collection_name = f"collection_{safe_filename}"
 
-        # process pdf — text + vision for figures
-        full_text = process_pdf_text(target_path)
+        #Get page texts (list of strings, one per page)
+        page_texts = get_page_texts(target_path)
+
+        # async vision processing
         background_tasks.add_task(process_pdf_vision, target_path, collection_name)
 
+        #Splitter now used per page instead of overall text blob
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
-            chunk_overlap=400,
+            chunk_overlap=200,
             length_function=len,
-            is_separator_regex=False,
             separators=["\n\n", "\n", " ", ""]
         )
-        chunks = text_splitter.split_text(full_text)
 
         documents = []
         metadatas = []
         ids = []
+        chunk_counter = 0
 
-        for i, chunk in enumerate(chunks):
-            if chunk.strip():
-                documents.append(chunk)
-                ids.append(f"ID{i}")
-                metadatas.append({"source": file.filename, "chunk_index": i})
+        #Loop over each page
+        for page_num, page_text in enumerate(page_texts, start=1):
+            if not page_text.strip():
+                continue
+            page_chunks = text_splitter.split_text(page_text)
+            for chunk in page_chunks:
+                if chunk.strip():
+                    documents.append(chunk)
+                    ids.append(f"ID{chunk_counter}")
+                    metadatas.append({
+                        "source": file.filename,
+                        "page": page_num          #Page number store for citation
+                    })
+                    chunk_counter += 1
 
+        #Upsert into ChromaDB
         if documents:
             collection = chroma_client.get_or_create_collection(name=collection_name)
             collection.upsert(
@@ -501,6 +535,7 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
                 ids=ids
             )
 
+        # Session logic
         history = read_history()
         existing_session = next((s for s in history["sessions"] if s["collection_name"] == collection_name), None)
 
@@ -508,13 +543,13 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
             session_id = existing_session["id"]
         else:
             session_id = str(uuid.uuid4())
-            # Do not append empty session to history.json yet
 
         return {
             "collection_name": collection_name,
             "display_title": file.filename,
             "session_id": session_id
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -524,53 +559,63 @@ async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
 #similar to upload endpoint but for pdf links
 @app.get("/api/download")
 async def download_and_ingest(url: str, background_tasks: BackgroundTasks):
-    # 1. Download the PDF
+    # download PDF
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
-    
-    # 2. Determine filename
+
+    # determine the filename
     filename = url.split("/")[-1]
     if not filename.endswith(".pdf"):
         filename = f"manual_{uuid.uuid4().hex[:8]}.pdf"
 
-    # 3. Save to UPLOAD_DIR (same as upload)
+    # save to UPLOAD_DIR
     target_path = os.path.join(UPLOAD_DIR, filename)
     with open(target_path, "wb") as f:
         f.write(response.content)
 
-    # 4. --- REPEAT THE EXACT SAME PROCESSING AS /api/upload ---
+    # process the PDF (same as upload)
     try:
         safe_filename = re.sub(r'[^a-zA-Z0-9]', '_', filename)
         collection_name = f"collection_{safe_filename}"
 
-        # Extract text (synchronous — needed immediately)
-        full_text = process_pdf_text(target_path)
-        
-        # Vision processing: run in background (async), just like upload
+        # Get page texts
+        page_texts = get_page_texts(target_path)
+
+        # async vision processing
         background_tasks.add_task(process_pdf_vision, target_path, collection_name)
 
-        # Split text into chunks
+        #Splitter
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
-            chunk_overlap=400,
+            chunk_overlap=200,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
-        chunks = text_splitter.split_text(full_text)
 
-        # Upsert into ChromaDB (synchronous — needed immediately)
         documents = []
         metadatas = []
         ids = []
-        for i, chunk in enumerate(chunks):
-            if chunk.strip():
-                documents.append(chunk)
-                ids.append(f"ID{i}")
-                metadatas.append({"source": filename, "chunk_index": i})
+        chunk_counter = 0
 
+        #Loop over each page
+        for page_num, page_text in enumerate(page_texts, start=1):
+            if not page_text.strip():
+                continue
+            page_chunks = text_splitter.split_text(page_text)
+            for chunk in page_chunks:
+                if chunk.strip():
+                    documents.append(chunk)
+                    ids.append(f"ID{chunk_counter}")
+                    metadatas.append({
+                        "source": filename,
+                        "page": page_num
+                    })
+                    chunk_counter += 1
+
+        #Upsert into ChromaDB
         if documents:
             collection = chroma_client.get_or_create_collection(name=collection_name)
             collection.upsert(
@@ -589,10 +634,11 @@ async def download_and_ingest(url: str, background_tasks: BackgroundTasks):
         }
 
     except Exception as e:
-        # Clean up if something fails
         if os.path.exists(target_path):
             os.remove(target_path)
         raise HTTPException(status_code=500, detail=str(e))
+    
+
 
 @app.post("/api/ask")
 async def ask_rag(payload: queryreq):
